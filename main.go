@@ -86,6 +86,7 @@ func (s *Server) dispatch(b []byte) {
 				defer conn.Close()
 				c := datachan.NewConn(channel)
 				defer c.Close()
+				log.Println("connected:", c)
 				go io.Copy(conn, c)
 				io.Copy(c, conn)
 			}()
