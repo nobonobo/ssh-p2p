@@ -93,7 +93,7 @@ func (s *Server) dispatch(b []byte) {
 						log.Println(err)
 					}
 				}()
-				_, err := io.Copy(c, conn)
+				_, err = io.Copy(c, conn)
 				if err != nil {
 					log.Println(err)
 				}
@@ -313,7 +313,7 @@ func main() {
 						log.Println(err)
 					}
 				}()
-				_, err := io.Copy(sock, conn)
+				_, err = io.Copy(sock, conn)
 				if err != nil {
 					log.Println(err)
 				}
