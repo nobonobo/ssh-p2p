@@ -87,8 +87,16 @@ func (s *Server) dispatch(b []byte) {
 				c := datachan.NewConn(channel)
 				defer c.Close()
 				log.Println("connected:", c)
-				go io.Copy(conn, c)
-				io.Copy(c, conn)
+				go func() {
+					_, err := io.Copy(conn, c)
+					if err != nil {
+						log.Println(err)
+					}
+				}()
+				_, err := io.Copy(c, conn)
+				if err != nil {
+					log.Println(err)
+				}
 			}()
 		}
 		offer, err := conn.Offer()
@@ -299,8 +307,16 @@ func main() {
 				log.Println("connected:", conn)
 				defer c.Close()
 				defer conn.Close()
-				go io.Copy(conn, sock)
-				io.Copy(sock, conn)
+				go func() {
+					_, err := io.Copy(conn, sock)
+					if err != nil {
+						log.Println(err)
+					}
+				}()
+				_, err := io.Copy(sock, conn)
+				if err != nil {
+					log.Println(err)
+				}
 			}()
 		}
 	}
