@@ -77,16 +77,18 @@ func (s *Server) dispatch(b []byte) {
 			return
 		}
 		conn.OnDataChannel = func(channel *webrtc.DataChannel) {
-			conn, err := net.Dial("tcp", s.addr)
-			if err != nil {
-				log.Println("dial failed:", err)
-				return
-			}
-			defer conn.Close()
-			c := datachan.NewConn(channel)
-			defer c.Close()
-			go io.Copy(conn, c)
-			io.Copy(c, conn)
+			go func() {
+				conn, err := net.Dial("tcp", s.addr)
+				if err != nil {
+					log.Println("dial failed:", err)
+					return
+				}
+				defer conn.Close()
+				c := datachan.NewConn(channel)
+				defer c.Close()
+				go io.Copy(conn, c)
+				io.Copy(c, conn)
+			}()
 		}
 		offer, err := conn.Offer()
 		if err != nil {
