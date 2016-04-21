@@ -82,9 +82,11 @@ func (s *Server) dispatch(b []byte) {
 				log.Println("dial failed:", err)
 				return
 			}
+			defer conn.Close()
 			c := datachan.NewConn(channel)
+			defer c.Close()
 			go io.Copy(conn, c)
-			go io.Copy(c, conn)
+			io.Copy(c, conn)
 		}
 		offer, err := conn.Offer()
 		if err != nil {
@@ -108,12 +110,6 @@ func (s *Server) dispatch(b []byte) {
 			return
 		}
 		sdp := webrtc.DeserializeSessionDescription(v.Description)
-		/*
-			sdp := &webrtc.SessionDescription{
-				Type: "answer",
-				Sdp:  v.Description,
-			}
-		*/
 		if sdp == nil {
 			log.Println("desirialize sdp failed", v.Description)
 			return
@@ -229,12 +225,6 @@ func (c *Client) dispatch(b []byte) {
 	case *signaling.Request:
 	case *signaling.Offer:
 		sdp := webrtc.DeserializeSessionDescription(v.Description)
-		/*
-			sdp := &webrtc.SessionDescription{
-				Type: "offer",
-				Sdp:  v.Description,
-			}
-		*/
 		if sdp == nil {
 			log.Println("desirialize sdp failed", v.Description)
 			return
@@ -290,6 +280,7 @@ func main() {
 		if err != nil {
 			log.Fatalln(err)
 		}
+		log.Println("listen:", addr)
 		for {
 			sock, err := l.Accept()
 			if err != nil {
@@ -302,10 +293,11 @@ func main() {
 				if err != nil {
 					log.Fatalln(err)
 				}
+				log.Println("connected:", conn)
 				defer c.Close()
 				defer conn.Close()
-				go io.Copy(sock, conn)
-				io.Copy(conn, sock)
+				go io.Copy(conn, sock)
+				io.Copy(sock, conn)
 			}()
 		}
 	}
