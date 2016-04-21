@@ -78,6 +78,7 @@ func (s *Server) dispatch(b []byte) {
 		}
 		conn.OnDataChannel = func(channel *webrtc.DataChannel) {
 			go func() {
+				defer channel.Close()
 				conn, err := net.Dial("tcp", s.addr)
 				if err != nil {
 					log.Println("dial failed:", err)
@@ -86,17 +87,10 @@ func (s *Server) dispatch(b []byte) {
 				defer conn.Close()
 				c := datachan.NewConn(channel)
 				defer c.Close()
+				time.Sleep(time.Second)
 				log.Println("connected:", c)
-				go func() {
-					_, err := io.Copy(conn, c)
-					if err != nil {
-						log.Println(err)
-					}
-				}()
-				_, err = io.Copy(c, conn)
-				if err != nil {
-					log.Println(err)
-				}
+				go receiver(conn, c)
+				sender(c, conn)
 			}()
 		}
 		offer, err := conn.Offer()
@@ -273,6 +267,50 @@ func (c *Client) dispatch(b []byte) {
 	}
 }
 
+const MTU = 1420
+
+func receiver(w io.Writer, r io.Reader) {
+	b := make([]byte, MTU)
+	for {
+		n, err := r.Read(b)
+		if err != nil {
+			log.Println("receive failed:", err)
+			return
+		}
+		log.Printf("receive: (%d)%X", n, b[:n])
+		if x, err := w.Write(b[:n]); err != nil {
+			log.Println("receive failed:", err)
+			return
+		} else {
+			if x != n {
+				log.Println("!")
+				return
+			}
+		}
+	}
+}
+
+func sender(w io.Writer, r io.Reader) {
+	b := make([]byte, MTU)
+	for {
+		n, err := r.Read(b)
+		if err != nil {
+			log.Println("send failed:", err)
+			return
+		}
+		log.Printf("send: (%d)%X", n, b[:n])
+		if x, err := w.Write(b[:n]); err != nil {
+			log.Println("send failed:", err)
+			return
+		} else {
+			if x != n {
+				log.Println("!")
+				return
+			}
+		}
+	}
+}
+
 func main() {
 	var client bool
 	var addr, room, id string
@@ -299,24 +337,18 @@ func main() {
 				continue
 			}
 			go func() {
+				defer sock.Close()
 				c := NewClient(room, id)
 				conn, err := c.Open()
 				if err != nil {
 					log.Fatalln(err)
 				}
-				log.Println("connected:", conn)
 				defer c.Close()
 				defer conn.Close()
-				go func() {
-					_, err := io.Copy(conn, sock)
-					if err != nil {
-						log.Println(err)
-					}
-				}()
-				_, err = io.Copy(sock, conn)
-				if err != nil {
-					log.Println(err)
-				}
+				time.Sleep(time.Second)
+				log.Println("connected:", conn)
+				go sender(conn, sock)
+				receiver(sock, conn)
 			}()
 		}
 	}
