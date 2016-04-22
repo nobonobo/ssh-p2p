@@ -77,21 +77,22 @@ func (s *Server) dispatch(b []byte) {
 			return
 		}
 		conn.OnDataChannel = func(channel *webrtc.DataChannel) {
-			go func() {
-				defer channel.Close()
-				conn, err := net.Dial("tcp", s.addr)
-				if err != nil {
-					log.Println("dial failed:", err)
-					return
-				}
-				defer conn.Close()
-				c := datachan.NewConn(channel)
-				defer c.Close()
-				time.Sleep(time.Second)
-				log.Println("connected:", c)
-				go receiver(conn, c)
-				sender(c, conn)
-			}()
+			channel.OnOpen = func() {
+				go func() {
+					defer channel.Close()
+					c := datachan.NewConn(channel)
+					defer c.Close()
+					conn, err := net.Dial("tcp", s.addr)
+					if err != nil {
+						log.Println("dial failed:", err)
+						return
+					}
+					defer conn.Close()
+					log.Println("connected:", c)
+					go io.Copy(conn, c)
+					io.Copy(c, conn)
+				}()
+			}
 		}
 		offer, err := conn.Offer()
 		if err != nil {
@@ -267,50 +268,6 @@ func (c *Client) dispatch(b []byte) {
 	}
 }
 
-const MTU = 1420
-
-func receiver(w io.Writer, r io.Reader) {
-	b := make([]byte, MTU)
-	for {
-		n, err := r.Read(b)
-		if err != nil {
-			log.Println("receive failed:", err)
-			return
-		}
-		log.Printf("receive: (%d)%X", n, b[:n])
-		if x, err := w.Write(b[:n]); err != nil {
-			log.Println("receive failed:", err)
-			return
-		} else {
-			if x != n {
-				log.Println("!")
-				return
-			}
-		}
-	}
-}
-
-func sender(w io.Writer, r io.Reader) {
-	b := make([]byte, MTU)
-	for {
-		n, err := r.Read(b)
-		if err != nil {
-			log.Println("send failed:", err)
-			return
-		}
-		log.Printf("send: (%d)%X", n, b[:n])
-		if x, err := w.Write(b[:n]); err != nil {
-			log.Println("send failed:", err)
-			return
-		} else {
-			if x != n {
-				log.Println("!")
-				return
-			}
-		}
-	}
-}
-
 func main() {
 	var client bool
 	var addr, room, id string
@@ -345,10 +302,9 @@ func main() {
 				}
 				defer c.Close()
 				defer conn.Close()
-				time.Sleep(time.Second)
 				log.Println("connected:", conn)
-				go sender(conn, sock)
-				receiver(sock, conn)
+				go io.Copy(conn, sock)
+				io.Copy(sock, conn)
 			}()
 		}
 	}
