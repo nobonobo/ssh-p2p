@@ -7,6 +7,14 @@ ssh p2p tunneling server and client
 2. ssh-p2p client <----negotiation----> ssh-p2p server
 3. sshd <--dial--- ssh-p2p server
 
+# backend protocol
+
+- RTCDataChannel/WebRTC
+- signaling server on appengine-go: https://signaling-2016.appspot.com/
+  src: https://github.com/nobonobo/rtcdc-p2p/tree/e50487af6b9c5aecc3f66386d4be497187f1de0e/signaling/server
+
+thx! github.com/keroserene/go-webrtc
+
 # install
 
 ```sh
