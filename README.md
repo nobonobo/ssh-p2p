@@ -12,7 +12,7 @@ ssh p2p tunneling server and client
 - RTCDataChannel/WebRTC
 - signaling server on appengine-go: https://signaling-2016.appspot.com/
 
-  src: [signaring/server](https://github.com/nobonobo/rtcdc-p2p/tree/e50487af6b9c5aecc3f66386d4be497187f1de0e/signaling/server)
+  src: [signaling/server](https://github.com/nobonobo/rtcdc-p2p/tree/e50487af6b9c5aecc3f66386d4be497187f1de0e/signaling/server)
 
 thx! https://github.com/keroserene/go-webrtc
 
