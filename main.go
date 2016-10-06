@@ -133,6 +133,7 @@ func connect(key string, sock net.Conn) {
 	if err != nil {
 		log.Fatalln(err)
 	}
+
 	dial := new(client.Config)
 	dial.RoomID = key
 	dial.UserID = id
@@ -163,12 +164,24 @@ func connect(key string, sock net.Conn) {
 		go func() {
 			log.Println("data channel open:", dc)
 			defer log.Println("data channel close:", dc)
-			defer node.Close()
-			defer sock.Close()
 			c := peerconn.NewDCConn(dc)
-			defer c.Close()
-			go io.Copy(c, sock)
-			io.Copy(sock, c)
+			go func() {
+				if _, err := io.Copy(c, sock); err != nil {
+					log.Println(err)
+				}
+				if err := c.Close(); err != nil {
+					log.Println(err)
+				}
+			}()
+			if _, err := io.Copy(sock, c); err != nil {
+				log.Println(err)
+			}
+			if err := sock.Close(); err != nil {
+				log.Println(err)
+			}
+			if err := node.Close(); err != nil {
+				log.Println(err)
+			}
 		}()
 	})
 }
