@@ -9,9 +9,10 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
-	webrtc "github.com/keroserene/go-webrtc"
+	"github.com/nobonobo/p2pfw/peerconn"
+	"github.com/nobonobo/p2pfw/signaling/client"
+	"github.com/nobonobo/webrtc"
 )
 
 var iceServers = []string{"stun:stun.l.google.com:19302"}
@@ -38,12 +39,12 @@ func main() {
 		flags.PrintDefaults()
 		os.Exit(1)
 	}
-	webrtc.SetLoggingVerbosity(0)
+
 	switch cmd {
 	default:
 		flags.Usage()
 	case "newkey":
-		key, err := UUID()
+		key, err := client.UUID()
 		if err != nil {
 			log.Fatalln(err)
 		}
@@ -58,18 +59,7 @@ func main() {
 		}
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, syscall.SIGINT)
-		s := NewServer(addr, key, "***server***")
-		go func() {
-			defer s.Bye()
-			for {
-				if err := s.Create(); err != nil {
-					log.Println(err)
-				}
-				time.Sleep(10 * time.Second)
-			}
-		}()
-		s.Start()
-		defer s.Stop()
+		defer serve(key, addr)()
 		<-sig
 	case "client":
 		var addr, key string
@@ -89,24 +79,96 @@ func main() {
 				log.Println(err)
 				continue
 			}
-			id, err := UUID()
-			if err != nil {
-				log.Println(err)
-				continue
-			}
-			go func() {
-				defer sock.Close()
-				c := NewClient(key, id)
-				conn, err := c.Open()
-				if err != nil {
-					log.Fatalln(err)
-				}
-				defer c.Close()
-				defer conn.Close()
-				log.Println("connected:", conn)
-				go io.Copy(conn, sock)
-				io.Copy(sock, conn)
-			}()
+			go connect(key, sock)
 		}
 	}
+}
+
+func serve(key, addr string) func() error {
+	dial := new(client.Config)
+	dial.RoomID = key
+	dial.UserID = "***server***"
+	dial.URL = "wss://signaling.arukascloud.io/ws"
+
+	stun, err := peerconn.GetDefaultStunHost()
+	if err != nil {
+		log.Fatalln(err)
+	}
+	config := webrtc.NewConfiguration()
+	config.AddIceServer(stun)
+	node, err := peerconn.NewNode(dial, config)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	node.OnPeerConnection = func(dest string, conn *peerconn.Conn) error {
+		dc, err := conn.CreateDataChannel("default")
+		if err != nil {
+			return err
+		}
+		dc.OnOpen(func() {
+			go func() {
+				c := peerconn.NewDCConn(dc)
+				defer c.Close()
+				ssh, err := net.Dial("tcp", addr)
+				if err != nil {
+					log.Println("dial failed:", err)
+					return
+				}
+				defer ssh.Close()
+				log.Println("connected:", c)
+				go io.Copy(ssh, c)
+				io.Copy(c, ssh)
+			}()
+		})
+		return nil
+	}
+	if err := node.Start(true); err != nil {
+		log.Fatalln(err)
+	}
+	return node.Close
+}
+
+func connect(key string, sock net.Conn) {
+	id, err := client.UUID()
+	if err != nil {
+		log.Fatalln(err)
+	}
+	dial := new(client.Config)
+	dial.RoomID = key
+	dial.UserID = id
+	dial.URL = "wss://signaling.arukascloud.io/ws"
+
+	stun, err := peerconn.GetDefaultStunHost()
+	if err != nil {
+		log.Fatalln(err)
+	}
+	config := webrtc.NewConfiguration()
+	config.AddIceServer(stun)
+	node, err := peerconn.NewNode(dial, config)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	if err := node.Start(false); err != nil {
+		log.Fatalln(err)
+	}
+	members, err := node.Members()
+	if err != nil {
+		log.Fatalln(err)
+	}
+	conn, err := node.Connect(members.Owner)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	conn.OnDataChannel(func(dc *webrtc.DataChannel) {
+		go func() {
+			log.Println("data channel open:", dc)
+			defer log.Println("data channel close:", dc)
+			defer node.Close()
+			defer sock.Close()
+			c := peerconn.NewDCConn(dc)
+			defer c.Close()
+			go io.Copy(c, sock)
+			io.Copy(sock, c)
+		}()
+	})
 }
