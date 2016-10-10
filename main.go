@@ -15,8 +15,6 @@ import (
 	"github.com/nobonobo/webrtc"
 )
 
-var iceServers = []string{"stun:stun.l.google.com:19302"}
-
 const usage = `Usage: ssh-p2p SUBCMD [options]
 sub-commands:
 	newkey
@@ -90,7 +88,7 @@ func serve(key, addr string) func() error {
 	dial.UserID = "***server***"
 	dial.URL = "wss://signaling.arukascloud.io/ws"
 
-	stun, err := peerconn.GetDefaultStunHost()
+	stun, err := peerconn.GetDefaultStunHosts()
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -139,7 +137,7 @@ func connect(key string, sock net.Conn) {
 	dial.UserID = id
 	dial.URL = "wss://signaling.arukascloud.io/ws"
 
-	stun, err := peerconn.GetDefaultStunHost()
+	stun, err := peerconn.GetDefaultStunHosts()
 	if err != nil {
 		log.Fatalln(err)
 	}
