@@ -98,6 +98,10 @@ func serve(key, addr string) func() error {
 	if err != nil {
 		log.Fatalln(err)
 	}
+	node.OnLeave = func(member string) {
+		log.Println("leave:", member)
+		node.Clients.Del(member)
+	}
 	node.OnPeerConnection = func(dest string, conn *peerconn.Conn) error {
 		dc, err := conn.CreateDataChannel("default")
 		if err != nil {
@@ -113,10 +117,14 @@ func serve(key, addr string) func() error {
 					return
 				}
 				defer ssh.Close()
-				log.Println("connected:", c)
+				log.Println("connected:", dest)
 				go io.Copy(ssh, c)
 				io.Copy(c, ssh)
 			}()
+		})
+		dc.OnClose(func() {
+			log.Println("disconnected:", dest)
+			dc.Close()
 		})
 		return nil
 	}
@@ -160,24 +168,30 @@ func connect(key string, sock net.Conn) {
 	}
 	conn.OnDataChannel(func(dc *webrtc.DataChannel) {
 		go func() {
+			defer func() {
+				if err := node.Close(); err != nil {
+					log.Println(err)
+				}
+			}()
 			log.Println("data channel open:", dc)
 			defer log.Println("data channel close:", dc)
 			c := peerconn.NewDCConn(dc)
 			go func() {
+				defer func() {
+					if err := c.Close(); err != nil {
+						log.Println(err)
+					}
+				}()
 				if _, err := io.Copy(c, sock); err != nil {
 					log.Println(err)
 				}
-				if err := c.Close(); err != nil {
+			}()
+			defer func() {
+				if err := sock.Close(); err != nil {
 					log.Println(err)
 				}
 			}()
 			if _, err := io.Copy(sock, c); err != nil {
-				log.Println(err)
-			}
-			if err := sock.Close(); err != nil {
-				log.Println(err)
-			}
-			if err := node.Close(); err != nil {
 				log.Println(err)
 			}
 		}()
