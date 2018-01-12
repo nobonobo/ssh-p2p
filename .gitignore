@@ -22,3 +22,5 @@ _testmain.go
 *.exe
 *.test
 *.prof
+
+ssh-p2p

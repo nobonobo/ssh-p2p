@@ -1,18 +1,26 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
+	"path"
 	"syscall"
+	"time"
 
-	"github.com/nobonobo/p2pfw/peerconn"
-	"github.com/nobonobo/p2pfw/signaling/client"
-	"github.com/nobonobo/webrtc"
+	"github.com/google/uuid"
+	"github.com/nobonobo/ssh-p2p/signaling"
+	"github.com/pions/webrtc"
+	"github.com/pions/webrtc/pkg/datachannel"
+	"github.com/pions/webrtc/pkg/ice"
 )
 
 const usage = `Usage: ssh-p2p SUBCMD [options]
@@ -25,7 +33,92 @@ sub-commands:
 		ssh client side peer mode
 `
 
+var (
+	defaultRTCConfiguration = webrtc.RTCConfiguration{
+		IceServers: []webrtc.RTCIceServer{
+			{
+				URLs: []string{
+					"stun:stun.l.google.com:19302",
+				},
+			},
+		},
+	}
+)
+
+func push(dst, src, sdp string) error {
+	buf := bytes.NewBuffer(nil)
+	if err := json.NewEncoder(buf).Encode(signaling.ConnectInfo{
+		Source: src,
+		SDP:    sdp,
+	}); err != nil {
+		return err
+	}
+	resp, err := http.Post(signaling.URI+path.Join("/", "push", dst), "application/json", buf)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("http failed")
+	}
+	return nil
+}
+
+func pull(ctx context.Context, id string) <-chan signaling.ConnectInfo {
+	ch := make(chan signaling.ConnectInfo)
+	var retry time.Duration
+	go func() {
+		faild := func() {
+			if retry < 10 {
+				retry++
+			}
+			time.Sleep(retry * time.Second)
+		}
+		defer close(ch)
+		for {
+			req, err := http.NewRequest("GET", signaling.URI+path.Join("/", "pull", id), nil)
+			if err != nil {
+				if ctx.Err() == context.Canceled {
+					return
+				}
+				log.Println("get failed:", err)
+				faild()
+				continue
+			}
+			req = req.WithContext(ctx)
+			res, err := http.DefaultClient.Do(req)
+			if err != nil {
+				if ctx.Err() == context.Canceled {
+					return
+				}
+				log.Println("get failed:", err)
+				faild()
+				continue
+			}
+			defer res.Body.Close()
+			retry = time.Duration(0)
+			var info signaling.ConnectInfo
+			if err := json.NewDecoder(res.Body).Decode(&info); err != nil {
+				if err == io.EOF {
+					continue
+				}
+				if ctx.Err() == context.Canceled {
+					return
+				}
+				log.Println("get failed:", err)
+				faild()
+				continue
+			}
+			if len(info.Source) > 0 && len(info.SDP) > 0 {
+				ch <- info
+			}
+		}
+	}()
+	return ch
+}
+
 func main() {
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	cmd := ""
 	if len(os.Args) > 1 {
 		cmd = os.Args[1]
@@ -42,10 +135,7 @@ func main() {
 	default:
 		flags.Usage()
 	case "newkey":
-		key, err := client.UUID()
-		if err != nil {
-			log.Fatalln(err)
-		}
+		key := uuid.New().String()
 		fmt.Println(key)
 		os.Exit(0)
 	case "server":
@@ -57,8 +147,10 @@ func main() {
 		}
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, syscall.SIGINT)
-		defer serve(key, addr)()
+		ctx, cancel := context.WithCancel(context.Background())
+		go serve(ctx, key, addr)
 		<-sig
+		cancel()
 	case "client":
 		var addr, key string
 		flags.StringVar(&addr, "listen", "127.0.0.1:2222", "listen addr = host:port")
@@ -71,129 +163,161 @@ func main() {
 			log.Fatalln(err)
 		}
 		log.Println("listen:", addr)
-		for {
-			sock, err := l.Accept()
-			if err != nil {
-				log.Println(err)
-				continue
-			}
-			go connect(key, sock)
-		}
-	}
-}
-
-func serve(key, addr string) func() error {
-	dial := new(client.Config)
-	dial.RoomID = key
-	dial.UserID = "***server***"
-	dial.URL = "wss://signaling.arukascloud.io/ws"
-
-	stun, err := peerconn.GetDefaultStunHosts()
-	if err != nil {
-		log.Fatalln(err)
-	}
-	config := webrtc.NewConfiguration()
-	config.AddIceServer(stun)
-	node, err := peerconn.NewNode(dial, config)
-	if err != nil {
-		log.Fatalln(err)
-	}
-	node.OnLeave = func(member string) {
-		log.Println("leave:", member)
-		node.Clients.Del(member)
-	}
-	node.OnPeerConnection = func(dest string, conn *peerconn.Conn) error {
-		dc, err := conn.CreateDataChannel("default")
-		if err != nil {
-			return err
-		}
-		dc.OnOpen(func() {
-			go func() {
-				c := peerconn.NewDCConn(dc)
-				defer c.Close()
-				ssh, err := net.Dial("tcp", addr)
-				if err != nil {
-					log.Println("dial failed:", err)
-					return
-				}
-				defer ssh.Close()
-				log.Println("connected:", dest)
-				go io.Copy(ssh, c)
-				io.Copy(c, ssh)
-			}()
-		})
-		dc.OnClose(func() {
-			log.Println("disconnected:", dest)
-			dc.Close()
-		})
-		return nil
-	}
-	if err := node.Start(true); err != nil {
-		log.Fatalln(err)
-	}
-	return node.Close
-}
-
-func connect(key string, sock net.Conn) {
-	id, err := client.UUID()
-	if err != nil {
-		log.Fatalln(err)
-	}
-
-	dial := new(client.Config)
-	dial.RoomID = key
-	dial.UserID = id
-	dial.URL = "wss://signaling.arukascloud.io/ws"
-
-	stun, err := peerconn.GetDefaultStunHosts()
-	if err != nil {
-		log.Fatalln(err)
-	}
-	config := webrtc.NewConfiguration()
-	config.AddIceServer(stun)
-	node, err := peerconn.NewNode(dial, config)
-	if err != nil {
-		log.Fatalln(err)
-	}
-	if err := node.Start(false); err != nil {
-		log.Fatalln(err)
-	}
-	members, err := node.Members()
-	if err != nil {
-		log.Fatalln(err)
-	}
-	conn, err := node.Connect(members.Owner)
-	if err != nil {
-		log.Fatalln(err)
-	}
-	conn.OnDataChannel(func(dc *webrtc.DataChannel) {
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, syscall.SIGINT)
+		ctx, cancel := context.WithCancel(context.Background())
 		go func() {
-			defer func() {
-				if err := node.Close(); err != nil {
+			for {
+				sock, err := l.Accept()
+				if err != nil {
 					log.Println(err)
+					continue
 				}
-			}()
-			log.Println("data channel open:", dc)
-			defer log.Println("data channel close:", dc)
-			c := peerconn.NewDCConn(dc)
-			go func() {
-				defer func() {
-					if err := c.Close(); err != nil {
-						log.Println(err)
-					}
-				}()
-				if _, err := io.Copy(c, sock); err != nil {
-					log.Println(err)
-				}
-			}()
-			defer func() {
-				if err := sock.Close(); err != nil {
-					log.Println(err)
-				}
-			}()
-			if _, err := io.Copy(sock, c); err != nil {
-				log.Println(err)
+				go connect(ctx, key, sock)
 			}
 		}()
-	})
+		<-sig
+		cancel()
+	}
+}
+
+type sendWrap struct {
+	*webrtc.RTCDataChannel
+}
+
+func (s *sendWrap) Write(b []byte) (int, error) {
+	err := s.RTCDataChannel.Send(datachannel.PayloadBinary{Data: b})
+	return len(b), err
+}
+
+func serve(ctx context.Context, key, addr string) {
+	log.Println("server started")
+	for v := range pull(ctx, key) {
+		log.Printf("info: %#v", v)
+		pc, err := webrtc.New(defaultRTCConfiguration)
+		if err != nil {
+			log.Println("rtc error:", err)
+			continue
+		}
+		ssh, err := net.Dial("tcp", addr)
+		if err != nil {
+			log.Println("ssh dial filed:", err)
+			pc.Close()
+			continue
+		}
+		pc.OnICEConnectionStateChange = func(state ice.ConnectionState) {
+			log.Print("pc ice state change:", state)
+			if state == ice.ConnectionStateDisconnected {
+				pc.Close()
+				ssh.Close()
+			}
+		}
+		pc.OnDataChannel = func(dc *webrtc.RTCDataChannel) {
+			dc.Lock()
+			dc.OnOpen = func() {
+				log.Print("dial:", addr)
+				io.Copy(&sendWrap{dc}, ssh)
+				log.Println("disconnected")
+			}
+			dc.Onmessage = func(payload datachannel.Payload) {
+				switch p := payload.(type) {
+				case *datachannel.PayloadBinary:
+					_, err := ssh.Write(p.Data)
+					if err != nil {
+						log.Println("ssh write failed:", err)
+						pc.Close()
+						return
+					}
+				}
+			}
+			dc.Unlock()
+		}
+		if err := pc.SetRemoteDescription(webrtc.RTCSessionDescription{
+			Type: webrtc.RTCSdpTypeOffer,
+			Sdp:  string(v.SDP),
+		}); err != nil {
+			log.Println("rtc error:", err)
+			pc.Close()
+			ssh.Close()
+			continue
+		}
+		answer, err := pc.CreateAnswer(nil)
+		if err != nil {
+			log.Println("rtc error:", err)
+			pc.Close()
+			ssh.Close()
+			continue
+		}
+		if err := push(v.Source, key, answer.Sdp); err != nil {
+			log.Println("rtc error:", err)
+			pc.Close()
+			ssh.Close()
+			continue
+		}
+	}
+}
+
+func connect(ctx context.Context, key string, sock net.Conn) {
+	id := uuid.New().String()
+	log.Println("client id:", id)
+	pc, err := webrtc.New(defaultRTCConfiguration)
+	if err != nil {
+		log.Println("rtc error:", err)
+		return
+	}
+	pc.OnICEConnectionStateChange = func(state ice.ConnectionState) {
+		log.Print("pc ice state change:", state)
+	}
+	dc, err := pc.CreateDataChannel("data", nil)
+	if err != nil {
+		log.Println("create dc failed:", err)
+		pc.Close()
+		return
+	}
+	dc.Lock()
+	dc.OnOpen = func() {
+		io.Copy(&sendWrap{dc}, sock)
+		pc.Close()
+		log.Println("disconnected")
+	}
+	dc.Onmessage = func(payload datachannel.Payload) {
+		switch p := payload.(type) {
+		case *datachannel.PayloadBinary:
+			_, err := sock.Write(p.Data)
+			if err != nil {
+				log.Println("sock write failed:", err)
+				pc.Close()
+				return
+			}
+		}
+	}
+	dc.Unlock()
+	log.Print("DataChannel:", dc)
+	go func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		for v := range pull(ctx, id) {
+			log.Printf("info: %#v", v)
+			if err := pc.SetRemoteDescription(webrtc.RTCSessionDescription{
+				Type: webrtc.RTCSdpTypeAnswer,
+				Sdp:  string(v.SDP),
+			}); err != nil {
+				log.Println("rtc error:", err)
+				pc.Close()
+				return
+			}
+			return
+		}
+	}()
+	offer, err := pc.CreateOffer(nil)
+	if err != nil {
+		log.Println("create offer error:", err)
+		pc.Close()
+		return
+	}
+	if err := push(key, id, offer.Sdp); err != nil {
+		log.Println("push error:", err)
+		pc.Close()
+		return
+	}
 }
