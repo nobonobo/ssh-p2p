@@ -86,7 +86,7 @@ func serve(key, addr string) func() error {
 	dial := new(client.Config)
 	dial.RoomID = key
 	dial.UserID = "***server***"
-	dial.URL = "wss://signaling.arukascloud.io/ws"
+	dial.URL = "wss://signaling.irieda.com/ws"
 
 	stun, err := peerconn.GetDefaultStunHosts()
 	if err != nil {
@@ -143,7 +143,7 @@ func connect(key string, sock net.Conn) {
 	dial := new(client.Config)
 	dial.RoomID = key
 	dial.UserID = id
-	dial.URL = "wss://signaling.arukascloud.io/ws"
+	dial.URL = "wss://signaling.irieda.com/ws"
 
 	stun, err := peerconn.GetDefaultStunHosts()
 	if err != nil {
