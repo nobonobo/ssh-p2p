@@ -1,0 +1,10 @@
+github.com/google/uuid v1.0.0 h1:b4Gk+7WdP/d3HZH8EJsZpvV7EtDOgaZLtnaNGIu1adA=
+github.com/google/uuid v1.0.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
+github.com/pions/pkg v0.0.0-20180811084944-7c593763038f h1:OWQguzSOO0k5Nfd0mbXPasTnumo2Ke+hyt1CGgCOOns=
+github.com/pions/pkg v0.0.0-20180811084944-7c593763038f/go.mod h1:r9wKZs+Xxv2acLspex4CHQiIhFjGK1zGP+nUm/8klXA=
+github.com/pions/webrtc v1.1.0 h1:MnacBCpy3NyNOqx06iwXRHB7OdJD1/9Ltip5X3jI0Rk=
+github.com/pions/webrtc v1.1.0/go.mod h1:sQhy8101lrrfMDzn8H/9YoCJDLzAgpT05HKVeyupaak=
+github.com/pkg/errors v0.8.0 h1:WdK/asTD0HN+q6hsWO3/vpuAkAr+tw6aNJNDFFf0+qw=
+github.com/pkg/errors v0.8.0/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
+golang.org/x/net v0.0.0-20181023162649-9b4f9f5ad519 h1:x6rhz8Y9CjbgQkccRGmELH6K+LJj7tOoh3XWeC1yaQM=
+golang.org/x/net v0.0.0-20181023162649-9b4f9f5ad519/go.mod h1:mL1N/T3taQHkDXs73rZJwtUhF3w3ftmwwsq0BUmARs4=

@@ -9,17 +9,25 @@ ssh p2p tunneling server and client
 
 # backend protocol
 
-- RTCDataChannel/WebRTC
-- signaling server: https://signaling.arukascloud.io/
+- RTCDataChannel/WebRTC: https://github.com/pions/webrtc
+- signaling server: https://nobo-signaling.appspot.com/
 
-  src: [signaling/server](https://github.com/nobonobo/p2pfw/tree/master/signaling/server)
+  src: [signaling/gae](https://github.com/nobonobo/ssh-p2p/signaling/gae)
 
-thx! https://github.com/keroserene/go-webrtc
+thx! https://github.com/pions/webrtc
 
 # install
 
+for macOS or Linux
 ```sh
 $ go get -u github.com/nobonobo/ssh-p2p
+```
+
+for Windows(pkg-manager 'scoop' needed)
+```cmd
+scoop install pkg-config openssl gcc go git
+set PKG_CONFIG_PATH=%USERPROFILE%\scoop\apps\openssl\1.1.1_6\lib\pkgconfig
+go get -u github.com/nobonobo/ssh-p2p​
 ```
 
 # usage
