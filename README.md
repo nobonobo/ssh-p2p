@@ -18,16 +18,8 @@ thx! https://github.com/pions/webrtc
 
 # install
 
-for macOS or Linux
 ```sh
 $ go get -u github.com/nobonobo/ssh-p2p
-```
-
-for Windows(pkg-manager 'scoop' needed)
-```cmd
-scoop install pkg-config openssl gcc go git
-set PKG_CONFIG_PATH=%USERPROFILE%\scoop\apps\openssl\1.1.1_6\lib\pkgconfig
-go get -u github.com/nobonobo/ssh-p2p​
 ```
 
 # usage

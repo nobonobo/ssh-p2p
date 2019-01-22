@@ -205,21 +205,21 @@ func serve(ctx context.Context, key, addr string) {
 			pc.Close()
 			continue
 		}
-		pc.OnICEConnectionStateChange = func(state ice.ConnectionState) {
+		pc.OnICEConnectionStateChange(func(state ice.ConnectionState) {
 			log.Print("pc ice state change:", state)
 			if state == ice.ConnectionStateDisconnected {
 				pc.Close()
 				ssh.Close()
 			}
-		}
-		pc.OnDataChannel = func(dc *webrtc.RTCDataChannel) {
-			dc.Lock()
-			dc.OnOpen = func() {
+		})
+		pc.OnDataChannel(func(dc *webrtc.RTCDataChannel) {
+			//dc.Lock()
+			dc.OnOpen(func() {
 				log.Print("dial:", addr)
 				io.Copy(&sendWrap{dc}, ssh)
 				log.Println("disconnected")
-			}
-			dc.Onmessage = func(payload datachannel.Payload) {
+			})
+			dc.Onmessage(func(payload datachannel.Payload) {
 				switch p := payload.(type) {
 				case *datachannel.PayloadBinary:
 					_, err := ssh.Write(p.Data)
@@ -229,9 +229,9 @@ func serve(ctx context.Context, key, addr string) {
 						return
 					}
 				}
-			}
-			dc.Unlock()
-		}
+			})
+			//dc.Unlock()
+		})
 		if err := pc.SetRemoteDescription(webrtc.RTCSessionDescription{
 			Type: webrtc.RTCSdpTypeOffer,
 			Sdp:  string(v.SDP),
@@ -265,22 +265,22 @@ func connect(ctx context.Context, key string, sock net.Conn) {
 		log.Println("rtc error:", err)
 		return
 	}
-	pc.OnICEConnectionStateChange = func(state ice.ConnectionState) {
+	pc.OnICEConnectionStateChange(func(state ice.ConnectionState) {
 		log.Print("pc ice state change:", state)
-	}
+	})
 	dc, err := pc.CreateDataChannel("data", nil)
 	if err != nil {
 		log.Println("create dc failed:", err)
 		pc.Close()
 		return
 	}
-	dc.Lock()
-	dc.OnOpen = func() {
+	//dc.Lock()
+	dc.OnOpen(func() {
 		io.Copy(&sendWrap{dc}, sock)
 		pc.Close()
 		log.Println("disconnected")
-	}
-	dc.Onmessage = func(payload datachannel.Payload) {
+	})
+	dc.OnMessage(func(payload datachannel.Payload) {
 		switch p := payload.(type) {
 		case *datachannel.PayloadBinary:
 			_, err := sock.Write(p.Data)
@@ -290,8 +290,8 @@ func connect(ctx context.Context, key string, sock net.Conn) {
 				return
 			}
 		}
-	}
-	dc.Unlock()
+	})
+	//dc.Unlock()
 	log.Print("DataChannel:", dc)
 	go func() {
 		ctx, cancel := context.WithCancel(context.Background())
