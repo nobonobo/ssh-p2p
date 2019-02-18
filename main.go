@@ -34,8 +34,8 @@ sub-commands:
 `
 
 var (
-	defaultRTCConfiguration = webrtc.RTCConfiguration{
-		IceServers: []webrtc.RTCIceServer{
+	defaultRTCConfiguration = webrtc.Configuration{
+		ICEServers: []webrtc.ICEServer{
 			{
 				URLs: []string{
 					"stun:stun.l.google.com:19302",
@@ -182,11 +182,11 @@ func main() {
 }
 
 type sendWrap struct {
-	*webrtc.RTCDataChannel
+	*webrtc.DataChannel
 }
 
 func (s *sendWrap) Write(b []byte) (int, error) {
-	err := s.RTCDataChannel.Send(datachannel.PayloadBinary{Data: b})
+	err := s.DataChannel.Send(datachannel.PayloadBinary{Data: b})
 	return len(b), err
 }
 
@@ -194,7 +194,7 @@ func serve(ctx context.Context, key, addr string) {
 	log.Println("server started")
 	for v := range pull(ctx, key) {
 		log.Printf("info: %#v", v)
-		pc, err := webrtc.New(defaultRTCConfiguration)
+		pc, err := webrtc.NewPeerConnection(defaultRTCConfiguration)
 		if err != nil {
 			log.Println("rtc error:", err)
 			continue
@@ -212,7 +212,7 @@ func serve(ctx context.Context, key, addr string) {
 				ssh.Close()
 			}
 		})
-		pc.OnDataChannel(func(dc *webrtc.RTCDataChannel) {
+		pc.OnDataChannel(func(dc *webrtc.DataChannel) {
 			//dc.Lock()
 			dc.OnOpen(func() {
 				log.Print("dial:", addr)
@@ -232,8 +232,8 @@ func serve(ctx context.Context, key, addr string) {
 			})
 			//dc.Unlock()
 		})
-		if err := pc.SetRemoteDescription(webrtc.RTCSessionDescription{
-			Type: webrtc.RTCSdpTypeOffer,
+		if err := pc.SetRemoteDescription(webrtc.SessionDescription{
+			Type: webrtc.SDPTypeOffer,
 			Sdp:  string(v.SDP),
 		}); err != nil {
 			log.Println("rtc error:", err)
@@ -260,7 +260,7 @@ func serve(ctx context.Context, key, addr string) {
 func connect(ctx context.Context, key string, sock net.Conn) {
 	id := uuid.New().String()
 	log.Println("client id:", id)
-	pc, err := webrtc.New(defaultRTCConfiguration)
+	pc, err := webrtc.NewPeerConnection(defaultRTCConfiguration)
 	if err != nil {
 		log.Println("rtc error:", err)
 		return
@@ -298,8 +298,8 @@ func connect(ctx context.Context, key string, sock net.Conn) {
 		defer cancel()
 		for v := range pull(ctx, id) {
 			log.Printf("info: %#v", v)
-			if err := pc.SetRemoteDescription(webrtc.RTCSessionDescription{
-				Type: webrtc.RTCSdpTypeAnswer,
+			if err := pc.SetRemoteDescription(webrtc.SessionDescription{
+				Type: webrtc.SDPTypeAnswer,
 				Sdp:  string(v.SDP),
 			}); err != nil {
 				log.Println("rtc error:", err)
