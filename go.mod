@@ -5,6 +5,5 @@ require (
 	github.com/google/uuid v1.0.0
 	github.com/pions/transport v0.1.0 // indirect
 	github.com/pions/webrtc v1.2.0
-	github.com/pions/dtls v1.0.2
 	gotest.tools v2.2.0+incompatible // indirect
 )
