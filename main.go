@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -18,9 +19,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/nobonobo/ssh-p2p/signaling"
-	"github.com/pions/webrtc"
-	"github.com/pions/webrtc/pkg/datachannel"
-	"github.com/pions/webrtc/pkg/ice"
+	"github.com/pion/ice/v2"
+	"github.com/pion/webrtc/v3"
 )
 
 const usage = `Usage: ssh-p2p SUBCMD [options]
@@ -34,8 +34,8 @@ sub-commands:
 `
 
 var (
-	defaultRTCConfiguration = webrtc.RTCConfiguration{
-		IceServers: []webrtc.RTCIceServer{
+	defaultRTCConfiguration = webrtc.Configuration{
+		ICEServers: []webrtc.ICEServer{
 			{
 				URLs: []string{
 					"stun:stun.l.google.com:19302",
@@ -44,6 +44,30 @@ var (
 		},
 	}
 )
+
+// Encode encodes the input in base64
+// It can optionally zip the input before encoding
+func Encode(obj interface{}) string {
+	b, err := json.Marshal(obj)
+	if err != nil {
+		panic(err)
+	}
+
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+// Decode decodes the input from base64
+// It can optionally unzip the input after decoding
+func Decode(in string, obj interface{}) {
+	b, err := base64.StdEncoding.DecodeString(in)
+	if err != nil {
+		panic(err)
+	}
+	err = json.Unmarshal(b, obj)
+	if err != nil {
+		panic(err)
+	}
+}
 
 func push(dst, src, sdp string) error {
 	buf := bytes.NewBuffer(nil)
@@ -182,11 +206,11 @@ func main() {
 }
 
 type sendWrap struct {
-	*webrtc.RTCDataChannel
+	*webrtc.DataChannel
 }
 
 func (s *sendWrap) Write(b []byte) (int, error) {
-	err := s.RTCDataChannel.Send(datachannel.PayloadBinary{Data: b})
+	err := s.DataChannel.Send(b)
 	return len(b), err
 }
 
@@ -194,7 +218,7 @@ func serve(ctx context.Context, key, addr string) {
 	log.Println("server started")
 	for v := range pull(ctx, key) {
 		log.Printf("info: %#v", v)
-		pc, err := webrtc.New(defaultRTCConfiguration)
+		pc, err := webrtc.NewPeerConnection(defaultRTCConfiguration)
 		if err != nil {
 			log.Println("rtc error:", err)
 			continue
@@ -205,37 +229,33 @@ func serve(ctx context.Context, key, addr string) {
 			pc.Close()
 			continue
 		}
-		pc.OnICEConnectionStateChange(func(state ice.ConnectionState) {
+		pc.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
 			log.Print("pc ice state change:", state)
 			if state == ice.ConnectionStateDisconnected {
 				pc.Close()
 				ssh.Close()
 			}
 		})
-		pc.OnDataChannel(func(dc *webrtc.RTCDataChannel) {
+		pc.OnDataChannel(func(dc *webrtc.DataChannel) {
 			//dc.Lock()
 			dc.OnOpen(func() {
 				log.Print("dial:", addr)
 				io.Copy(&sendWrap{dc}, ssh)
 				log.Println("disconnected")
 			})
-			dc.Onmessage(func(payload datachannel.Payload) {
-				switch p := payload.(type) {
-				case *datachannel.PayloadBinary:
-					_, err := ssh.Write(p.Data)
-					if err != nil {
-						log.Println("ssh write failed:", err)
-						pc.Close()
-						return
-					}
+			dc.OnMessage(func(msg webrtc.DataChannelMessage) {
+				_, err := ssh.Write(msg.Data)
+				if err != nil {
+					log.Println("ssh write failed:", err)
+					pc.Close()
+					return
 				}
 			})
 			//dc.Unlock()
 		})
-		if err := pc.SetRemoteDescription(webrtc.RTCSessionDescription{
-			Type: webrtc.RTCSdpTypeOffer,
-			Sdp:  string(v.SDP),
-		}); err != nil {
+		offer := webrtc.SessionDescription{}
+		Decode(v.SDP, &offer)
+		if err := pc.SetRemoteDescription(offer); err != nil {
 			log.Println("rtc error:", err)
 			pc.Close()
 			ssh.Close()
@@ -248,7 +268,19 @@ func serve(ctx context.Context, key, addr string) {
 			ssh.Close()
 			continue
 		}
-		if err := push(v.Source, key, answer.Sdp); err != nil {
+		// Create channel that is blocked until ICE Gathering is complete
+		gatherComplete := webrtc.GatheringCompletePromise(pc)
+
+		// Sets the LocalDescription, and starts our UDP listeners
+		err = pc.SetLocalDescription(answer)
+		if err != nil {
+			panic(err)
+		}
+		// Block until ICE Gathering is complete, disabling trickle ICE
+		// we do this because we only can exchange one signaling message
+		// in a production application you should exchange ICE Candidates via OnICECandidate
+		<-gatherComplete
+		if err := push(v.Source, key, Encode(*pc.LocalDescription())); err != nil {
 			log.Println("rtc error:", err)
 			pc.Close()
 			ssh.Close()
@@ -260,12 +292,12 @@ func serve(ctx context.Context, key, addr string) {
 func connect(ctx context.Context, key string, sock net.Conn) {
 	id := uuid.New().String()
 	log.Println("client id:", id)
-	pc, err := webrtc.New(defaultRTCConfiguration)
+	pc, err := webrtc.NewPeerConnection(defaultRTCConfiguration)
 	if err != nil {
 		log.Println("rtc error:", err)
 		return
 	}
-	pc.OnICEConnectionStateChange(func(state ice.ConnectionState) {
+	pc.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
 		log.Print("pc ice state change:", state)
 	})
 	dc, err := pc.CreateDataChannel("data", nil)
@@ -280,28 +312,25 @@ func connect(ctx context.Context, key string, sock net.Conn) {
 		pc.Close()
 		log.Println("disconnected")
 	})
-	dc.OnMessage(func(payload datachannel.Payload) {
-		switch p := payload.(type) {
-		case *datachannel.PayloadBinary:
-			_, err := sock.Write(p.Data)
-			if err != nil {
-				log.Println("sock write failed:", err)
-				pc.Close()
-				return
-			}
+	dc.OnMessage(func(msg webrtc.DataChannelMessage) {
+		_, err := sock.Write(msg.Data)
+		if err != nil {
+			log.Println("sock write failed:", err)
+			pc.Close()
+			return
 		}
+
 	})
 	//dc.Unlock()
-	log.Print("DataChannel:", dc)
+	log.Printf("DataChannel: %#v\n", dc)
 	go func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		for v := range pull(ctx, id) {
 			log.Printf("info: %#v", v)
-			if err := pc.SetRemoteDescription(webrtc.RTCSessionDescription{
-				Type: webrtc.RTCSdpTypeAnswer,
-				Sdp:  string(v.SDP),
-			}); err != nil {
+			answer := webrtc.SessionDescription{}
+			Decode(v.SDP, &answer)
+			if err := pc.SetRemoteDescription(answer); err != nil {
 				log.Println("rtc error:", err)
 				pc.Close()
 				return
@@ -315,7 +344,17 @@ func connect(ctx context.Context, key string, sock net.Conn) {
 		pc.Close()
 		return
 	}
-	if err := push(key, id, offer.Sdp); err != nil {
+	gatherComplete := webrtc.GatheringCompletePromise(pc)
+	err = pc.SetLocalDescription(offer)
+	if err != nil {
+		panic(err)
+	}
+
+	// Block until ICE Gathering is complete, disabling trickle ICE
+	// we do this because we only can exchange one signaling message
+	// in a production application you should exchange ICE Candidates via OnICECandidate
+	<-gatherComplete
+	if err := push(key, id, Encode(*pc.LocalDescription())); err != nil {
 		log.Println("push error:", err)
 		pc.Close()
 		return
