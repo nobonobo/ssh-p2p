@@ -1,3 +1,8 @@
+> [!NOTE]
+> This project will be archived and no longer maintained. You can use this instead.
+> 
+> https://github.com/rtctunnel/rtctunnel
+    
 # ssh-p2p
 ssh p2p tunneling server and client
 
